@@ -4,7 +4,7 @@ const { Server } = require("socket.io");
 
 const app = express();
 
-// ✅ endpoint test cepat di browser
+// ✅ endpoint test cepat
 app.get("/", (req, res) => {
   res.send("billyapp signaling server is running ✅");
 });
@@ -14,10 +14,11 @@ app.get("/health", (req, res) => {
 
 const server = http.createServer(app);
 
-// ✅ cors aman untuk client Flutter
+// ✅ Socket.IO config untuk Render (polling + websocket)
 const io = new Server(server, {
   cors: { origin: "*" },
-  transports: ["websocket"],
+  transports: ["polling", "websocket"], // ✅ jangan websocket-only
+  allowEIO3: true, // ✅ bantu kompatibilitas untuk beberapa client
 });
 
 // userId -> socketId
@@ -26,7 +27,7 @@ const users = new Map();
 const socketToUser = new Map();
 
 io.on("connection", (socket) => {
-  console.log("connected:", socket.id);
+  console.log("connected:", socket.id, "ip:", socket.handshake.address);
 
   socket.on("register", (userId) => {
     // 1) hapus user lama pada socket ini
@@ -37,6 +38,7 @@ io.on("connection", (socket) => {
     const oldSocketId = users.get(userId);
     if (oldSocketId && oldSocketId !== socket.id) {
       socketToUser.delete(oldSocketId);
+      // opsional: users.set(userId, socket.id) akan overwrite anyway
     }
 
     // 3) simpan mapping baru
@@ -55,25 +57,27 @@ io.on("connection", (socket) => {
       io.to(targetSocketId).emit("signal", { from: fromUser, data });
     } else {
       console.log("user not found:", to, "| online:", Array.from(users.keys()));
-      // (opsional) balas ke pengirim supaya tahu target offline
-      socket.emit("signal", { from: "server", data: { type: "user_offline", payload: { to } } });
+      socket.emit("signal", {
+        from: "server",
+        data: { type: "user_offline", payload: { to } },
+      });
     }
   });
 
-  socket.on("disconnect", () => {
+  socket.on("disconnect", (reason) => {
     const userId = socketToUser.get(socket.id);
     if (userId) {
       users.delete(userId);
       socketToUser.delete(socket.id);
-      console.log("disconnected:", userId, socket.id);
+      console.log("disconnected:", userId, socket.id, "reason:", reason);
     } else {
-      console.log("disconnected:", socket.id);
+      console.log("disconnected:", socket.id, "reason:", reason);
     }
     console.log("online users:", Array.from(users.keys()));
   });
 });
 
-// ✅ Render: pakai PORT dari env
+// ✅ Render: wajib pakai PORT dari env
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Signaling on http://0.0.0.0:${PORT}`);
